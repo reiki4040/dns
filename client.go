@@ -24,6 +24,7 @@ type Conn struct {
 	UDPSize        uint16            // minimum receive buffer for UDP messages
 	TsigSecret     map[string]string // secret(s) for Tsig map[<zonename>]<base64 secret>, zonename must be in canonical form (lowercase, fqdn, see RFC 4034 Section 6.2)
 	tsigRequestMAC string
+	ForceTCP       bool
 }
 
 // A Client defines parameters for a DNS client.
@@ -221,9 +222,19 @@ func (co *Conn) ReadMsgHeader(hdr *Header) ([]byte, error) {
 		err error
 	)
 
-	switch t := co.Conn.(type) {
-	case *net.TCPConn, *tls.Conn:
-		r := t.(io.Reader)
+	isTCP := true
+	if !co.ForceTCP {
+		switch co.Conn.(type) {
+		case *net.TCPConn, *tls.Conn:
+			isTCP = true
+		default:
+			isTCP = false
+		}
+	}
+
+	switch isTCP {
+	case true:
+		r := co.Conn.(io.Reader)
 
 		// First two bytes specify the length of the entire message.
 		l, err := tcpMsgLen(r)
@@ -233,12 +244,12 @@ func (co *Conn) ReadMsgHeader(hdr *Header) ([]byte, error) {
 		p = make([]byte, l)
 		n, err = tcpRead(r, p)
 	default:
-		if co.UDPSize > MinMsgSize {
-			p = make([]byte, co.UDPSize)
-		} else {
-			p = make([]byte, MinMsgSize)
-		}
-		n, err = co.Read(p)
+			if co.UDPSize > MinMsgSize {
+				p = make([]byte, co.UDPSize)
+			} else {
+				p = make([]byte, MinMsgSize)
+			}
+			n, err = co.Read(p)
 	}
 
 	if err != nil {
@@ -311,9 +322,20 @@ func (co *Conn) Read(p []byte) (n int, err error) {
 	if len(p) < 2 {
 		return 0, io.ErrShortBuffer
 	}
-	switch t := co.Conn.(type) {
-	case *net.TCPConn, *tls.Conn:
-		r := t.(io.Reader)
+
+	isTCP := true
+	if !co.ForceTCP {
+		switch co.Conn.(type) {
+		case *net.TCPConn, *tls.Conn:
+			isTCP = true
+		default:
+			isTCP = false
+		}
+	}
+
+	switch isTCP {
+	case true:
+		r := co.Conn.(io.Reader)
 
 		l, err := tcpMsgLen(r)
 		if err != nil {
@@ -323,6 +345,8 @@ func (co *Conn) Read(p []byte) (n int, err error) {
 			return l, io.ErrShortBuffer
 		}
 		return tcpRead(r, p[:l])
+	default:
+
 	}
 	// UDP connection
 	return co.Conn.Read(p)
@@ -353,9 +377,19 @@ func (co *Conn) WriteMsg(m *Msg) (err error) {
 
 // Write implements the net.Conn Write method.
 func (co *Conn) Write(p []byte) (n int, err error) {
-	switch t := co.Conn.(type) {
-	case *net.TCPConn, *tls.Conn:
-		w := t.(io.Writer)
+	isTCP := true
+	if !co.ForceTCP {
+		switch co.Conn.(type) {
+		case *net.TCPConn, *tls.Conn:
+			isTCP = true
+		default:
+			isTCP = false
+		}
+	}
+
+	switch isTCP {
+	case true:
+		w := co.Conn.(io.Writer)
 
 		lp := len(p)
 		if lp < 2 {
@@ -369,6 +403,8 @@ func (co *Conn) Write(p []byte) (n int, err error) {
 		p = append(l, p...)
 		n, err := io.Copy(w, bytes.NewReader(p))
 		return int(n), err
+	default:
+
 	}
 	return co.Conn.Write(p)
 }
